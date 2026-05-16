@@ -1,0 +1,4 @@
+chromadb==1.5.9
+python-dotenv==1.2.2
+sentence-transformers==5.5.0
+torch==2.12.0
