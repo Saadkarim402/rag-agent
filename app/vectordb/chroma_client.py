@@ -33,7 +33,7 @@ class ChromaDBManager:
             raise RuntimeError("ChromaDB client is not initialized")
         return self._client
 
-    def get_collection(self, name: str, metadata: Optional[Dict[str, Any]] = None) -> Collection:
+    def get_collection(self, name: str, metadata: Optional[Dict[str, Any]] = None) -> Collection: # type: ignore
         """Load an existing collection or create a new one in the persistent store."""
         if not name:
             raise ValueError("collection name must not be empty")
