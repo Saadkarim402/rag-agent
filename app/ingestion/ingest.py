@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.embeddings.embedder import EmbeddingManager
@@ -9,17 +8,17 @@ from app.vectordb.chroma_client import ChromaDBManager
 
 
 class DocumentIngestionManager:
-    """Orchestrates simple text chunking, embedding, and storage to ChromaDB.
+    """Orchestrates deterministic document ingestion and indexing.
 
-    This class focuses solely on ingestion and indexing orchestration. It performs
-    deterministic chunking, generates embeddings via `EmbeddingManager`, and stores
-    vectors and documents using `ChromaDBManager`.
+    This class handles raw text ingestion, text chunking, embedding generation,
+    and vector storage. It is intentionally minimal and focused on ingestion
+    workflows without retrieval or LLM logic.
     """
 
     def __init__(
         self,
         chroma: Optional[ChromaDBManager] = None,
-        embedding_manager: Optional[EmbeddingManager] = None,
+        embedding_manager: Optional[type[EmbeddingManager]] = None,
         collection_name: str = "documents",
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
@@ -37,64 +36,67 @@ class DocumentIngestionManager:
         self.chunk_size = int(chunk_size)
         self.chunk_overlap = int(chunk_overlap)
 
-    def _chunk_text(self, text: str) -> List[str]:
-        """Simple deterministic text chunking with overlap.
-
-        - Splits by character windows while avoiding mid-word cuts when possible.
-        - Preserves chunk ordering and supports a fixed overlap in characters.
-        """
+    def _normalize_text(self, text: str) -> str:
         if not isinstance(text, str):
             raise TypeError("text must be a string")
-        if not text:
+        return " ".join(text.strip().split())
+
+    def _get_overlap_words(self, words: List[str]) -> List[str]:
+        if self.chunk_overlap == 0 or not words:
             return []
 
-        text = text.strip()
-        length = len(text)
-        chunks: List[str] = []
-        start = 0
-
-        while start < length:
-            end = start + self.chunk_size
-            if end >= length:
-                chunk = text[start:length]
-                chunks.append(chunk)
+        overlap_words: List[str] = []
+        total = 0
+        for word in reversed(words):
+            increment = len(word) + (1 if overlap_words else 0)
+            if total + increment > self.chunk_overlap:
                 break
+            overlap_words.append(word)
+            total += increment
 
-            # avoid splitting mid-word: try to move end back to last whitespace
-            window = text[start:end]
-            last_space = window.rfind(" ")
-            if last_space > int(self.chunk_size * 0.5):
-                cut = start + last_space
-            else:
-                # if no suitable whitespace, cut at end
-                cut = end
+        return list(reversed(overlap_words))
 
-            chunk = text[start:cut]
-            chunks.append(chunk)
+    def _chunk_text(self, text: str) -> List[str]:
+        """Deterministically split text into readable chunks with overlap."""
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return []
 
-            # advance start by chunk_size - overlap (but ensure progress)
-            start = max(cut - self.chunk_overlap, cut - (self.chunk_size - 1))
+        words = normalized.split(" ")
+        chunks: List[str] = []
+        current_chunk: List[str] = []
+        current_length = 0
+
+        for word in words:
+            next_length = current_length + (1 if current_chunk else 0) + len(word)
+            if next_length > self.chunk_size and current_chunk:
+                chunks.append(" ".join(current_chunk))
+                overlap = self._get_overlap_words(current_chunk)
+                current_chunk = overlap.copy()
+                current_length = len(" ".join(current_chunk))
+                next_length = current_length + (1 if current_chunk else 0) + len(word)
+                if next_length > self.chunk_size and not current_chunk:
+                    current_chunk = [word]
+                    current_length = len(word)
+                    continue
+
+            current_chunk.append(word)
+            current_length = next_length
+
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
 
         return chunks
 
     def _generate_chunk_id(self, doc_id: str, chunk_index: int, chunk_text: str) -> str:
-        """Generate a deterministic chunk id from document id, index, and chunk content."""
-        if not doc_id:
-            raise ValueError("doc_id must be provided")
-        h = hashlib.sha1()
-        h.update(doc_id.encode("utf-8"))
-        h.update(b":")
-        h.update(str(chunk_index).encode("utf-8"))
-        h.update(b":")
-        # include a short fingerprint of the chunk text to keep ids stable
-        h.update(hashlib.sha1(chunk_text.encode("utf-8")).hexdigest().encode("utf-8"))
-        return h.hexdigest()
+        if not isinstance(doc_id, str) or not doc_id:
+            raise ValueError("doc_id must be a non-empty string")
 
-    def ingest_document(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[str]:
-        """Ingest a single document: chunk, embed, and store in ChromaDB.
+        hash_input = f"{doc_id}:{chunk_index}:{hashlib.sha1(chunk_text.encode('utf-8')).hexdigest()}"
+        return hashlib.sha1(hash_input.encode("utf-8")).hexdigest()
 
-        Returns the list of generated chunk ids.
-        """
+    def ingest_text(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[str]:
+        """Ingest a single raw text document into ChromaDB."""
         if not isinstance(doc_id, str) or not doc_id:
             raise TypeError("doc_id must be a non-empty string")
         if not isinstance(text, str):
@@ -104,24 +106,20 @@ class DocumentIngestionManager:
         if not chunks:
             return []
 
-        # generate deterministic ids per chunk
-        ids: List[str] = [self._generate_chunk_id(doc_id, i, chunk) for i, chunk in enumerate(chunks)]
+        ids = [self._generate_chunk_id(doc_id, i, chunk) for i, chunk in enumerate(chunks)]
 
-        # generate embeddings
         try:
             embeddings = self.embedding_manager.embed_texts(chunks)
-        except Exception as exc:  # lightweight error handling
+        except Exception as exc:
             raise RuntimeError(f"failed to generate embeddings: {exc}") from exc
 
-        # prepare metadatas per chunk
         metadatas: List[Dict[str, Any]] = []
-        for i, _ in enumerate(chunks):
-            md: Dict[str, Any] = {"source_id": doc_id, "chunk_index": i}
-            if metadata:
-                md.update(metadata)
-            metadatas.append(md)
+        for index, _ in enumerate(chunks):
+            chunk_metadata: Dict[str, Any] = {"source_id": doc_id, "chunk_index": index}
+            if metadata is not None:
+                chunk_metadata.update(metadata)
+            metadatas.append(chunk_metadata)
 
-        # store in chroma
         try:
             self.chroma.add_documents(
                 collection_name=self.collection_name,
@@ -131,27 +129,26 @@ class DocumentIngestionManager:
                 metadatas=metadatas,
             )
         except Exception as exc:
-            raise RuntimeError(f"failed to store embeddings in ChromaDB: {exc}") from exc
+            raise RuntimeError(f"failed to store chunk vectors in ChromaDB: {exc}") from exc
 
         return ids
 
-    def ingest_documents(self, docs: Iterable[Dict[str, Any]]) -> List[str]:
-        """Ingest multiple documents.
-
-        Each item in `docs` must be a dict with keys: `id` (str), `text` (str), optional `metadata` (dict).
-        Returns a flat list of all generated chunk ids.
-        """
-        if not isinstance(docs, Iterable):
-            raise TypeError("docs must be an iterable of dicts")
+    def ingest_texts(self, documents: Iterable[Dict[str, Any]]) -> List[str]:
+        """Ingest multiple raw text documents in a batch."""
+        if not isinstance(documents, Iterable):
+            raise TypeError("documents must be an iterable of document dicts")
 
         all_ids: List[str] = []
-        for item in docs:
+        for item in documents:
             if not isinstance(item, dict):
-                raise TypeError("each document must be a dict with keys 'id' and 'text'")
+                raise TypeError("each document must be a dict containing 'id' and 'text'")
+
             doc_id = item.get("id")
             text = item.get("text")
             metadata = item.get("metadata")
-            chunk_ids = self.ingest_document(doc_id=doc_id, text=text, metadata=metadata)
-            all_ids.extend(chunk_ids)
+            all_ids.extend(self.ingest_text(doc_id=doc_id, text=text, metadata=metadata))
 
         return all_ids
+
+    ingest_document = ingest_text
+    ingest_documents = ingest_texts
