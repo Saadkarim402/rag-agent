@@ -77,6 +77,7 @@ class ChromaDBManager:
         query_embeddings: Iterable[List[float]],
         n_results: int = 10,
         include_metadata: bool = True,
+        metadata_filter: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Query a collection for similar embeddings."""
         if not collection_name:
@@ -91,11 +92,20 @@ class ChromaDBManager:
         if include_metadata:
             include_fields.append("metadatas")
 
-        return collection.query(
+        # If a metadata filter is provided and the underlying collection
+        # supports a `where` argument, pass it through. This keeps the
+        # storage abstraction while enabling filter support when available.
+        query_kwargs: Dict[str, Any] = dict(
             query_embeddings=query_list,
             n_results=n_results,
             include=include_fields,
         )
+
+        if metadata_filter:
+            # Chroma accepts `where` to filter by metadata; attach if present.
+            query_kwargs["where"] = metadata_filter
+
+        return collection.query(**query_kwargs)
 
     def delete_documents(self, collection_name: str, ids: Iterable[str]) -> None:
         """Delete documents from a collection by their IDs."""
