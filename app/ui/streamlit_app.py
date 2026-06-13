@@ -20,7 +20,7 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
 
 /* Apply font to the entire app */
-html, body, [class*="css"], .stMarkdown, p, span, button {
+html, body, [class*="css"], .stMarkdown, p {
     font-family: 'Outfit', sans-serif !important;
 }
 
