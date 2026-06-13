@@ -121,6 +121,31 @@ class DocumentIngestionManager:
 
         return chunks
 
+    def _clean_chunk(self, chunk: str, should_capitalize: bool = True) -> str:
+        if not isinstance(chunk, str):
+            return ""
+        
+        forbidden_words = {"and", "or", "but", "the", "a"}
+        while True:
+            # Strip leading/trailing spaces and commas
+            chunk = chunk.strip(" ,")
+            if not chunk:
+                break
+            
+            words = chunk.split(" ")
+            # Check if first word is a forbidden conjunction or article
+            if words[0].lower() in forbidden_words:
+                # Remove the first word and loop again to re-strip and check
+                chunk = " ".join(words[1:])
+            else:
+                break
+                
+        if chunk and should_capitalize:
+            # Capitalize the first letter
+            chunk = chunk[0].upper() + chunk[1:]
+            
+        return chunk
+
     def _get_overlap_sentences(self, sentences: List[str]) -> List[str]:
         """Extract the last N sentences that fit in chunk_overlap."""
         if self.chunk_overlap == 0 or not sentences:
@@ -133,6 +158,8 @@ class DocumentIngestionManager:
             # Length includes sentence + space separator
             sentence_length = len(sentence) + (1 if overlap_sentences else 0)
             if total_length + sentence_length > self.chunk_overlap:
+                if not overlap_sentences:
+                    overlap_sentences.append(sentence)
                 break
             overlap_sentences.append(sentence)
             total_length += sentence_length
@@ -145,72 +172,50 @@ class DocumentIngestionManager:
         Tries to break at natural boundaries (commas, conjunctions after noun phrases).
         Avoids leaving incomplete phrases like "scaling, and" or "and networking".
         """
+        # Determine capitalization based on whether the original text starts with a capital letter/digit
+        should_capitalize = not sentence[0].islower() if sentence else True
         if len(sentence) <= self.chunk_size:
-            return [sentence]
+            cleaned = self._clean_chunk(sentence, should_capitalize=should_capitalize)
+            return [cleaned] if cleaned else []
 
         logger.info(f"[CHUNKING] Sentence exceeds chunk_size ({len(sentence)} > {self.chunk_size})")
 
-        # Strategy: Break at commas when possible, then fallback to word boundaries
-        # Try comma-based splits first
-        parts = sentence.split(", ")
-        if len(parts) > 1:
-            sub_chunks: List[str] = []
-            current: List[str] = []
-            current_len = 0
-
-            for part in parts:
-                # Add comma back for all but last part
-                part_with_comma = part if part == parts[-1] else part + ","
-                part_len = len(part_with_comma) + (1 if current else 0)
-
-                if current_len + part_len > self.chunk_size and current:
-                    # Current chunk is full, save it
-                    sub_chunks.append(" ".join(current))
-                    current = [part_with_comma.rstrip(",")]
-                    current_len = len(current[0])
-                else:
-                    current.append(part_with_comma.rstrip(","))
-                    current_len = current_len + part_len if current_len > 0 else len(current[0])
-
-            if current:
-                sub_chunks.append(" ".join(current))
-
-            # Verify we don't have incomplete trailing phrases
-            result = []
-            for chunk in sub_chunks:
-                # Don't add chunks that end with conjunctions or incomplete phrases
-                if not any(chunk.rstrip().endswith(bad) for bad in [", and", ", or", ", but", " and"]):
-                    result.append(chunk)
-                else:
-                    # This chunk ends badly, merge it with next or keep as fallback
-                    result.append(chunk)
-
-            if result:
-                logger.info(f"[CHUNKING] Split long sentence into {len(result)} sub-chunks using commas")
-                return result
-
-        # Fallback: word-based splitting
         words = sentence.split(" ")
-        sub_chunks = []
-        current = []
-        current_len = 0
+        sub_chunks: List[str] = []
+        current_chunk: List[str] = []
+        current_length = 0
 
         for word in words:
-            word_len = len(word) + (1 if current else 0)
-            if current_len + word_len > self.chunk_size and current:
-                sub_chunks.append(" ".join(current))
-                current = []
-                current_len = 0
+            next_length = current_length + (1 if current_chunk else 0) + len(word)
+            if next_length > self.chunk_size and current_chunk:
+                sub_chunks.append(" ".join(current_chunk))
+                overlap = self._get_overlap_words(current_chunk)
+                
+                # Prevent infinite loop if overlap doesn't shrink current_chunk
+                if len(overlap) >= len(current_chunk):
+                    overlap = overlap[1:]
+                
+                current_chunk = overlap.copy()
+                current_length = len(" ".join(current_chunk))
+                next_length = current_length + (1 if current_chunk else 0) + len(word)
+                if next_length > self.chunk_size and not current_chunk:
+                    current_chunk = [word]
+                    current_length = len(word)
+                    continue
 
-            current.append(word)
-            current_len = current_len + word_len if current_len > 0 else len(word)
+            current_chunk.append(word)
+            current_length = next_length
 
-        if current:
-            sub_chunks.append(" ".join(current))
+        if current_chunk:
+            sub_chunks.append(" ".join(current_chunk))
 
-        logger.info(f"[CHUNKING] Split long sentence into {len(sub_chunks)} sub-chunks using words")
-        return sub_chunks
+        cleaned_sub_chunks = []
+        for sc in sub_chunks:
+            cleaned = self._clean_chunk(sc, should_capitalize=should_capitalize)
+            if cleaned:
+                cleaned_sub_chunks.append(cleaned)
 
+        return cleaned_sub_chunks
 
     def _chunk_text(self, text: str) -> List[str]:
         """Deterministically split text into chunks with true sentence-awareness.
@@ -230,10 +235,14 @@ class DocumentIngestionManager:
         if not sentences:
             return []
 
+        # Determine capitalization based on whether the original text starts with a capital letter/digit
+        should_capitalize = not normalized[0].islower() if normalized else True
+
         # Single sentence fallback
         if len(sentences) == 1:
             if len(sentences[0]) <= self.chunk_size:
-                return sentences
+                cleaned = self._clean_chunk(sentences[0], should_capitalize=should_capitalize)
+                return [cleaned] if cleaned else []
             else:
                 return self._split_long_sentence_smartly(sentences[0])
 
@@ -248,6 +257,7 @@ class DocumentIngestionManager:
         while sentence_idx < len(sentences):
             chunk_sentences: List[str] = []
             chunk_length = 0
+            reached_end = False
 
             # Greedily add sentences until we exceed chunk_size
             while sentence_idx < len(sentences):
@@ -274,40 +284,56 @@ class DocumentIngestionManager:
                         sub_chunks = self._split_long_sentence_smartly(sentence)
                         chunks.extend(sub_chunks)
                         sentence_idx += 1
+                        if sentence_idx >= len(sentences):
+                            reached_end = True
                         break
                     else:
                         # Shouldn't happen but handle it
                         chunk_sentences.append(sentence)
                         chunk_length = next_length
                         sentence_idx += 1
+                        if sentence_idx >= len(sentences):
+                            reached_end = True
                         break
                 else:
                     # Add sentence to current chunk
                     chunk_sentences.append(sentence)
                     chunk_length = next_length
                     sentence_idx += 1
+                    if sentence_idx >= len(sentences):
+                        reached_end = True
 
             # Create chunk from accumulated sentences
             if chunk_sentences:
                 chunk_text = " ".join(chunk_sentences)
-                chunks.append(chunk_text)
+                cleaned = self._clean_chunk(chunk_text, should_capitalize=should_capitalize)
+                if cleaned:
+                    chunks.append(cleaned)
 
-                # Track tiny fragments
-                if len(chunk_text) < 15:  # Arbitrary minimum for semantic content
-                    tiny_chunk_count += 1
-                    logger.warning(
-                        "[CHUNKING] Tiny chunk detected: %s chars, %s sentences: %s...",
-                        len(chunk_text),
+                    # Track tiny fragments
+                    if len(cleaned) < 15:  # Arbitrary minimum for semantic content
+                        tiny_chunk_count += 1
+                        logger.warning(
+                            "[CHUNKING] Tiny chunk detected: %s chars: %s...",
+                            len(cleaned),
+                            cleaned[:50],
+                        )
+
+                    logger.info(
+                        "[CHUNKING] Created chunk %s sentences=%s chars=%s",
+                        len(chunks) - 1,
                         len(chunk_sentences),
-                        chunk_text[:50],
+                        len(cleaned),
                     )
 
-                logger.info(
-                    "[CHUNKING] Created chunk %s sentences=%s chars=%s",
-                    len(chunks) - 1,
-                    len(chunk_sentences),
-                    len(chunk_text),
-                )
+                if reached_end:
+                    break
+
+                overlap_sentences = self._get_overlap_sentences(chunk_sentences)
+                if len(overlap_sentences) >= len(chunk_sentences):
+                    overlap_sentences = overlap_sentences[1:]
+                
+                sentence_idx -= len(overlap_sentences)
 
         # Log quality metrics
         logger.info("=" * 80)

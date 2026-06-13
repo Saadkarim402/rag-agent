@@ -13,6 +13,7 @@ import tempfile
 class TestRetrievalQualityWithSentenceAwareChunking:
     """Verify that sentence-aware chunking maintains or improves retrieval quality."""
 
+
     @pytest.fixture
     def setup_pipeline(self):
         """Set up test pipeline with sentence-aware chunking."""
@@ -155,7 +156,7 @@ class TestRetrievalQualityWithSentenceAwareChunking:
 
         # Query specific to Kubernetes
         query = "How do pods work?"
-        results = retrieval_mgr.retrieve(query=query)
+        results = retrieval_mgr.retrieve(query=query, min_score_threshold=0.60)
 
         # Should prioritize Kubernetes results
         top_5_sources = [r["source_id"] for r in results[:3]]
@@ -184,7 +185,7 @@ class TestRetrievalQualityWithSentenceAwareChunking:
 
         # Query about specific capability
         query = "What does Kubernetes do with load balancing?"
-        results = retrieval_mgr.retrieve(query=query)
+        results = retrieval_mgr.retrieve(query=query, min_score_threshold=0.60)
 
         # Should find relevant chunk
         assert len(results) > 0, "Should find chunks about load balancing"

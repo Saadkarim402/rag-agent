@@ -23,8 +23,11 @@ def deterministic_vector(text: str, dim: int = 8) -> List[float]:
 
 
 @pytest.fixture(autouse=True)
-def patch_embeddings(monkeypatch: pytest.MonkeyPatch):
+def patch_embeddings(request, monkeypatch: pytest.MonkeyPatch):
     """Patch the EmbeddingManager to avoid heavy external model loads."""
+    if "test_retrieval_quality_regression" in request.node.nodeid:
+        yield
+        return
 
     def fake_embed_text(text: str) -> List[float]:
         return deterministic_vector(text)

@@ -30,6 +30,30 @@ class RetrievalResult:
     score: Optional[float]
     collection: str
 
+    def __getitem__(self, key: str) -> Any:
+        if not isinstance(key, str):
+            raise KeyError(key)
+        if hasattr(self, key):
+            return getattr(self, key)
+        if isinstance(self.metadata, dict) and key in self.metadata:
+            return self.metadata[key]
+        raise KeyError(key)
+
+    def __contains__(self, key: str) -> bool:
+        if not isinstance(key, str):
+            return False
+        if hasattr(self, key):
+            return True
+        if isinstance(self.metadata, dict) and key in self.metadata:
+            return True
+        return False
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
 
 class RetrievalManager:
     """High-level retrieval orchestration for semantic search.
@@ -54,11 +78,12 @@ class RetrievalManager:
         chroma: Optional[ChromaDBManager] = None,
         embedding_manager: Optional[EmbeddingManager] = None,
         config: Optional[RetrievalConfig] = None,
+        collection_name: Optional[str] = None,
     ) -> None:
         self.chroma = chroma or ChromaDBManager()
         self.embedding_manager = embedding_manager or EmbeddingManager
         self.config = config or RetrievalConfig()
-        self.default_collection_name = self.config.collection_name
+        self.default_collection_name = collection_name if collection_name is not None else self.config.collection_name
         self.default_top_k = self.config.top_k
         self.default_min_score_threshold = self.config.min_score_threshold
 

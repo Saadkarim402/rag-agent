@@ -26,10 +26,16 @@ class ChromaDBManager:
     @classmethod
     def _get_client(cls, persist_directory: Optional[Path] = None) -> Client:
         """Initialize and cache a persistent ChromaDB client."""
-        if cls._client is None:
+        if cls._client is None or (persist_directory is not None and cls._persist_directory != persist_directory):
             if persist_directory is None:
                 raise ValueError("persist_directory must be provided for first client initialization")
+            try:
+                from chromadb.api.shared_system_client import SharedSystemClient
+                SharedSystemClient._identifier_to_system.clear()
+            except Exception:
+                pass
             cls._client = chromadb.Client(Settings(chromadb_impl="chromadb.db.duckdb.DuckDB", persist_directory=str(persist_directory)))
+            cls._persist_directory = persist_directory
         return cls._client
 
     def _ensure_client(self) -> Client:
