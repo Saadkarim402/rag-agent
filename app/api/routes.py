@@ -28,6 +28,10 @@ class QueryResponse(BaseModel):
     answer: str
     source_nodes: List[RAGSourceNode]
     prompt: str
+    web_search_triggered: bool = False
+    latency_ms: float = 0.0
+    faithfulness: int = 5
+    answer_relevance: int = 5
 
 class IngestTextRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
@@ -89,6 +93,10 @@ async def query_rag_chain(
                 for r in response.source_nodes
             ],
             prompt=response.prompt,
+            web_search_triggered=response.web_search_triggered,
+            latency_ms=response.latency_ms,
+            faithfulness=response.faithfulness,
+            answer_relevance=response.answer_relevance,
         )
     except Exception as e:
         raise HTTPException(

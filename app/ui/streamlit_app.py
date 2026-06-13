@@ -161,6 +161,189 @@ def query_rag_engine(query: str, collection: str, top_k: int, threshold: float) 
     return None
 
 
+# --- Semantic Visualization & Evaluation Widgets ---
+
+def render_network_graph(query_text: str, source_nodes: List[dict]):
+    """Renders an interactive animated Vis.js node-edge relationship graph."""
+    if not source_nodes:
+        return
+        
+    import json
+    nodes = []
+    edges = []
+    
+    # 1. Query Node (Rose/Red)
+    nodes.append({
+        "id": "query",
+        "label": f"Query: {query_text[:20]}...",
+        "title": query_text,
+        "color": {
+            "background": "#f43f5e",
+            "border": "#be123c"
+        },
+        "shape": "dot",
+        "size": 22
+    })
+    
+    # 2. Extract Document and Chunk Nodes
+    added_docs = set()
+    for i, res in enumerate(source_nodes, 1):
+        meta = res.get("metadata") or {}
+        source_id = meta.get("source_id") or meta.get("source") or "unknown"
+        is_web = meta.get("is_web", False)
+        chunk_id = res.get("chunk_id")
+        score = res.get("score", 0.0)
+        
+        # Color palettes: Blue/Green for local, Purple for web
+        if is_web:
+            doc_color = {"background": "#c084fc", "border": "#7e22ce"}
+            chunk_color = {"background": "#e9d5ff", "border": "#9333ea"}
+            doc_label = f"Web: {source_id[:16]}..."
+            doc_id_key = f"web_doc_{source_id}"
+        else:
+            doc_color = {"background": "#60a5fa", "border": "#1d4ed8"}
+            chunk_color = {"background": "#a7f3d0", "border": "#059669"}
+            doc_label = f"Doc: {source_id[:16]}..."
+            doc_id_key = f"doc_{source_id}"
+            
+        # Add parent Document node
+        if doc_id_key not in added_docs:
+            nodes.append({
+                "id": doc_id_key,
+                "label": doc_label,
+                "title": source_id,
+                "color": doc_color,
+                "shape": "dot",
+                "size": 18
+            })
+            added_docs.add(doc_id_key)
+            
+        # Add Chunk node
+        nodes.append({
+            "id": chunk_id,
+            "label": f"Chunk {i}\nScore: {score:.2f}",
+            "title": res.get("document_text")[:250] + "...",
+            "color": chunk_color,
+            "shape": "dot",
+            "size": 13
+        })
+        
+        # Chunk -> Document Edge
+        edges.append({
+            "from": chunk_id,
+            "to": doc_id_key,
+            "arrows": "to",
+            "dashes": True,
+            "color": {"color": "rgba(255, 255, 255, 0.08)"}
+        })
+        
+        # Query -> Chunk Edge
+        edges.append({
+            "from": "query",
+            "to": chunk_id,
+            "label": f"{score:.2f}",
+            "font": {"size": 8, "color": "#94a3b8", "face": "Outfit, sans-serif"},
+            "color": {"color": "rgba(255, 255, 255, 0.15)"}
+        })
+        
+    nodes_json = json.dumps(nodes)
+    edges_json = json.dumps(edges)
+    
+    html_code = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+        <style type="text/css">
+            html, body {{
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                background-color: #0b0f19;
+            }}
+            #network {{
+                width: 100%;
+                height: 250px;
+                background-color: #0b0f19;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 8px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div id="network"></div>
+        <script type="text/javascript">
+            var nodes = new vis.DataSet({nodes_json});
+            var edges = new vis.DataSet({edges_json});
+            var container = document.getElementById('network');
+            var data = {{
+                nodes: nodes,
+                edges: edges
+            }};
+            var options = {{
+                nodes: {{
+                    shape: 'dot',
+                    font: {{
+                        color: '#cbd5e1',
+                        size: 11,
+                        face: 'Outfit, sans-serif'
+                    }},
+                    borderWidth: 1.5,
+                    shadow: {{
+                        enabled: true,
+                        color: 'rgba(0,0,0,0.5)',
+                        size: 3,
+                        x: 1,
+                        y: 1
+                    }}
+                }},
+                edges: {{
+                    width: 1.2,
+                    smooth: {{
+                        type: 'continuous'
+                    }}
+                }},
+                physics: {{
+                    stabilization: true,
+                    solver: 'forceAtlas2Based',
+                    forceAtlas2Based: {{
+                        gravitationalConstant: -80,
+                        centralGravity: 0.01,
+                        springLength: 80,
+                        springConstant: 0.05
+                    }}
+                }}
+            }};
+            var network = new vis.Network(container, data, options);
+        </script>
+    </body>
+    </html>
+    """
+    st.components.v1.html(html_code, height=260)
+
+
+def render_evaluation_metrics(msg: dict):
+    """Renders RAG metrics (latency, faithfulness, relevance) in clean dashboard columns."""
+    if "latency_ms" not in msg:
+        return
+        
+    latency = msg.get("latency_ms", 0.0)
+    faithfulness = msg.get("faithfulness", 5)
+    relevance = msg.get("answer_relevance", 5)
+    web_triggered = msg.get("web_search_triggered", False)
+    
+    if web_triggered:
+        st.warning("🌐 **Web Search Fallback Triggered** (Insufficient local database context).")
+        
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("⏱️ Latency", f"{latency:.0f} ms")
+    with col2:
+        st.metric("🛡️ Faithfulness (Anti-Hallucination)", f"{faithfulness}/5")
+    with col3:
+        st.metric("🎯 Answer Relevance", f"{relevance}/5")
+
+
 # --- Main Application Logic ---
 
 def main():
@@ -250,7 +433,7 @@ def main():
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
             if msg["role"] == "assistant" and "source_nodes" in msg:
-                # Expandable details underneath response
+                # 1. Expandable details underneath response
                 with st.expander("🔍 View Retrieved Context & Similarity Scores"):
                     for i, source in enumerate(msg["source_nodes"], 1):
                         meta = source.get("metadata") or {}
@@ -273,6 +456,14 @@ def main():
                     with st.expander("⚙️ View Compiled Prompt Template"):
                         st.code(msg["prompt"], language="text")
 
+                # 2. Interactive Vis.js Semantic Graph Visualizer
+                with st.expander("📊 View Semantic Context Graph", expanded=True):
+                    render_network_graph(msg.get("user_query", "Query"), msg["source_nodes"])
+                
+                # 3. Render System Analytics and Evaluation
+                with st.expander("📈 View RAG Performance & Evaluation", expanded=True):
+                    render_evaluation_metrics(msg)
+
     # Chat input and execution
     if prompt := st.chat_input("Ask a question about your documents..."):
         # Display user message
@@ -293,8 +484,13 @@ def main():
                     msg_data = {
                         "role": "assistant",
                         "content": answer,
+                        "user_query": prompt,
                         "source_nodes": response.get("source_nodes", []),
-                        "prompt": response.get("prompt", "")
+                        "prompt": response.get("prompt", ""),
+                        "web_search_triggered": response.get("web_search_triggered", False),
+                        "latency_ms": response.get("latency_ms", 0.0),
+                        "faithfulness": response.get("faithfulness", 5),
+                        "answer_relevance": response.get("answer_relevance", 5),
                     }
                     st.session_state.messages.append(msg_data)
                     st.rerun()

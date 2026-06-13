@@ -33,17 +33,22 @@ async def lifespan(app: FastAPI):
     chroma = ChromaDBManager(persist_directory=persist_dir)
     repository = DocumentRepository(repo_dir=repo_dir)
 
-    # 2. Initialize Ingestion and Retrieval Managers
+    from app.retrieval.hybrid import HybridRetriever
+    from app.retrieval.reranker import CrossEncoderReranker
+
+    # 2. Initialize Ingestion and Hybrid Retrieval Managers
     ingest_manager = DocumentIngestionManager(
         chroma=chroma,
         document_repository=repository,
         collection_name=collection_name,
     )
     
-    retriever = RetrievalManager(
+    retriever = HybridRetriever(
         chroma=chroma,
         collection_name=collection_name,
     )
+
+    reranker = CrossEncoderReranker(semantic_weight=0.7)
 
     # 3. Initialize LLM Client
     provider = os.getenv("LLM_PROVIDER", "ollama")
@@ -58,11 +63,13 @@ async def lifespan(app: FastAPI):
 
     llm_client = get_llm_client(provider, **client_kwargs)
 
-    # 4. Initialize RAG Chain
+    # 4. Initialize RAG Chain with Hybrid Retriever and Cross-Encoder Reranker
     rag_chain = RAGChain(
         retriever=retriever,
         llm_client=llm_client,
         default_collection_name=collection_name,
+        reranker=reranker,
+        confidence_threshold=0.35,
     )
 
     # 5. Share instances via FastAPI state
