@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any, Dict, Iterable, List, Optional
 
+from app.config import IngestionConfig
 from app.embeddings.embedder import EmbeddingManager
 from app.vectordb.chroma_client import ChromaDBManager
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentIngestionManager:
@@ -19,22 +23,38 @@ class DocumentIngestionManager:
         self,
         chroma: Optional[ChromaDBManager] = None,
         embedding_manager: Optional[type[EmbeddingManager]] = None,
-        collection_name: str = "documents",
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
+        config: Optional[IngestionConfig] = None,
+        collection_name: Optional[str] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
     ) -> None:
-        if chunk_size <= 0:
-            raise ValueError("chunk_size must be > 0")
-        if chunk_overlap < 0:
-            raise ValueError("chunk_overlap must be >= 0")
-        if chunk_overlap >= chunk_size:
-            raise ValueError("chunk_overlap must be smaller than chunk_size")
+        config = config or IngestionConfig()
 
         self.chroma = chroma or ChromaDBManager()
         self.embedding_manager = embedding_manager or EmbeddingManager
-        self.collection_name = collection_name
-        self.chunk_size = int(chunk_size)
-        self.chunk_overlap = int(chunk_overlap)
+        self.collection_name = collection_name if collection_name is not None else config.collection_name
+        self.chunk_size = int(chunk_size) if chunk_size is not None else config.chunk_size
+        self.chunk_overlap = int(chunk_overlap) if chunk_overlap is not None else config.chunk_overlap
+
+        if self.chunk_size <= 0:
+            raise ValueError("chunk_size must be > 0")
+        if self.chunk_overlap < 0:
+            raise ValueError("chunk_overlap must be >= 0")
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size")
+        if not self.collection_name or not isinstance(self.collection_name, str):
+            raise ValueError("collection_name must be a non-empty string")
+
+        if config.embedding_model is not None and hasattr(self.embedding_manager, "_model_name"):
+            self.embedding_manager._model_name = config.embedding_model
+
+        logger.info(
+            "[CONFIG] chunk_size=%s chunk_overlap=%s collection_name=%s embedding_model=%s",
+            self.chunk_size,
+            self.chunk_overlap,
+            self.collection_name,
+            config.embedding_model,
+        )
 
     def _normalize_text(self, text: str) -> str:
         if not isinstance(text, str):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -7,6 +8,9 @@ import chromadb
 from chromadb.api.client import Client
 from chromadb.config import Settings
 from chromadb.api.models import Collection
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChromaDBManager:
@@ -102,6 +106,7 @@ class ChromaDBManager:
         )
 
         if metadata_filter:
+            logger.info("[FILTER] Applying metadata filter to vector search: %s", metadata_filter)
             # Chroma accepts `where` to filter by metadata; attach if present.
             query_kwargs["where"] = metadata_filter
 

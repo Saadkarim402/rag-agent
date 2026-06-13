@@ -84,6 +84,7 @@ class RetrievalPipeline:
         collection_name: str,
         top_k: int = 5,
         metadata_filter: Optional[Dict[str, Any]] = None,
+        min_score_threshold: Optional[float] = None,
     ) -> List[RetrievalResult]:
         """Run the retrieval pipeline from query to final ordered results."""
         results = self._retriever.retrieve(
@@ -91,6 +92,7 @@ class RetrievalPipeline:
             collection_name=collection_name,
             top_k=top_k,
             metadata_filter=metadata_filter,
+            min_score_threshold=min_score_threshold,
         )
 
         if not results or self._reranker is None:

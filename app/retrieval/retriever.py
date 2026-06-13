@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
+from app.config import RetrievalConfig
 from app.embeddings.embedder import EmbeddingManager
 from app.vectordb.chroma_client import ChromaDBManager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -40,23 +44,34 @@ class RetrievalManager:
     it relies on the two manager abstractions.
 
     Example usage:
-        rm = RetrievalManager()
-        results = rm.retrieve(
-            query="What is the capital of France?",
-            collection_name="my_collection",
-            top_k=3,
-        )
-        for r in results:
-            print(r.chunk_id, r.score, r.document_text[:100])
+        config = RetrievalConfig(top_k=5, min_score_threshold=0.5)
+        rm = RetrievalManager(config=config)
+        results = rm.retrieve(query="What is the capital of France?", collection_name="my_collection")
     """
 
     def __init__(
         self,
         chroma: Optional[ChromaDBManager] = None,
         embedding_manager: Optional[EmbeddingManager] = None,
+        config: Optional[RetrievalConfig] = None,
     ) -> None:
         self.chroma = chroma or ChromaDBManager()
         self.embedding_manager = embedding_manager or EmbeddingManager
+        self.config = config or RetrievalConfig()
+        self.default_collection_name = self.config.collection_name
+        self.default_top_k = self.config.top_k
+        self.default_min_score_threshold = self.config.min_score_threshold
+
+        if self.config.embedding_model is not None and hasattr(self.embedding_manager, "_model_name"):
+            self.embedding_manager._model_name = self.config.embedding_model
+
+        logger.info(
+            "[CONFIG] top_k=%s min_score_threshold=%s collection_name=%s embedding_model=%s",
+            self.default_top_k,
+            self.default_min_score_threshold,
+            self.default_collection_name,
+            self.config.embedding_model,
+        )
 
     def _normalize_query(self, query: str) -> str:
         """Lightweight normalization for queries.
@@ -82,9 +97,10 @@ class RetrievalManager:
     def retrieve(
         self,
         query: str,
-        collection_name: str,
-        top_k: int = 5,
+        collection_name: Optional[str] = None,
+        top_k: Optional[int] = None,
         metadata_filter: Optional[Dict[str, Any]] = None,
+        min_score_threshold: Optional[float] = None,
     ) -> List[RetrievalResult]:
         """Retrieve nearest semantic neighbors for `query` from `collection_name`.
 
@@ -93,22 +109,35 @@ class RetrievalManager:
             collection_name: Name of the collection to query.
             top_k: Number of neighbors to return (must be > 0).
             metadata_filter: Optional dictionary to filter stored documents by metadata.
+            min_score_threshold: Optional minimum score to accept.
 
         Returns:
             List[RetrievalResult] ordered by increasing distance (closest first).
         """
         q = self._normalize_query(query)
+        logger.info("[QUERY] %s", q)
 
-        if not isinstance(collection_name, str) or not collection_name.strip():
+        collection_name = collection_name.strip() if isinstance(collection_name, str) and collection_name.strip() else self.default_collection_name
+        if not collection_name:
             raise ValueError("collection_name must be a non-empty string")
 
+        top_k = top_k if top_k is not None else self.default_top_k
         if not isinstance(top_k, int) or top_k <= 0:
             raise ValueError("top_k must be a positive integer")
+
+        threshold = self.default_min_score_threshold if min_score_threshold is None else min_score_threshold
+        if not isinstance(threshold, (int, float)) or threshold < 0.0 or threshold > 1.0:
+            raise ValueError("min_score_threshold must be between 0.0 and 1.0")
+
+        if metadata_filter:
+            logger.info("[FILTER] Applied metadata filter: %s", metadata_filter)
 
         try:
             embedding = self.embedding_manager.embed_text(q)
         except Exception as exc:
             raise RuntimeError(f"failed to create query embedding: {exc}") from exc
+
+        logger.info("[EMBEDDING] Query vector generated")
 
         try:
             raw = self.chroma.query_embeddings(
@@ -121,7 +150,6 @@ class RetrievalManager:
         except Exception as exc:
             raise RuntimeError(f"vector store query failed: {exc}") from exc
 
-        # Parse single-query response shape: lists per query.
         try:
             ids = raw.get("ids", [[]])[0]
             documents = raw.get("documents", [[]])[0]
@@ -149,8 +177,22 @@ class RetrievalManager:
                 )
             )
 
+        logger.info("[RETRIEVAL] Retrieved %s candidates", len(results))
+
         # Ensure deterministic ordering by distance (None values go last)
         results.sort(key=lambda r: (float("inf") if r.distance is None else r.distance))
 
+        if threshold > 0.0:
+            accepted = [r for r in results if r.score is not None and r.score >= threshold]
+            rejected = len(results) - len(accepted)
+            logger.info(
+                "[SCORE FILTER] Threshold=%.2f Accepted=%s Rejected=%s",
+                threshold,
+                len(accepted),
+                rejected,
+            )
+            results = accepted
+
+        logger.info("[FINAL] Returned results=%s", len(results))
         return results
 
