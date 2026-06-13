@@ -65,8 +65,26 @@ def main() -> None:
         ingest_mgr = DocumentIngestionManager(chroma=chroma, config=ingestion_config)
         retrieval_mgr = RetrievalManager(chroma=chroma, embedding_manager=EmbeddingManager, config=retrieval_config)
 
+        def print_chunk_debug(doc: Dict[str, Any]) -> None:
+            print("\n=== CHUNKING DEBUG ===")
+            print("Original document:")
+            print(doc["text"])
+            sentences = ingest_mgr._split_into_sentences(doc["text"])
+            print(f"Detected sentences={len(sentences)}")
+            for idx, sentence in enumerate(sentences):
+                print(f"  sentence {idx}: {sentence}")
+            chunks = ingest_mgr._chunk_text(doc["text"])
+            print(f"Generated chunks={len(chunks)}")
+            for idx, chunk in enumerate(chunks):
+                print(f"\n## Chunk {idx}:\n{chunk}")
+                print(f"length={len(chunk)}")
+                if idx + 1 < len(chunks):
+                    overlap = set(chunks[idx].split()) & set(chunks[idx + 1].split())
+                    print(f"overlap preview={sorted(list(overlap))[:10]}")
+
         print("\n=== INGESTION ===")
         for doc in SAMPLE_DOCS:
+            print_chunk_debug(doc)
             ids = ingest_mgr.ingest_text(doc_id=doc["id"], text=doc["text"], metadata=doc["metadata"])
             print(f"Ingested {doc['id']} with {len(ids)} chunk(s)")
             print("  chunk ids:", ids)

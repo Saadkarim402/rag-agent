@@ -114,8 +114,13 @@ class RetrievalManager:
         Returns:
             List[RetrievalResult] ordered by increasing distance (closest first).
         """
+        # === RETRIEVAL ===
+        logger.info("=" * 80)
+        logger.info("=== RETRIEVAL ===")
+        logger.info("=" * 80)
+        
         q = self._normalize_query(query)
-        logger.info("[QUERY] %s", q)
+        logger.info(f"[QUERY] {q}")
 
         collection_name = collection_name.strip() if isinstance(collection_name, str) and collection_name.strip() else self.default_collection_name
         if not collection_name:
@@ -130,14 +135,16 @@ class RetrievalManager:
             raise ValueError("min_score_threshold must be between 0.0 and 1.0")
 
         if metadata_filter:
-            logger.info("[FILTER] Applied metadata filter: %s", metadata_filter)
+            logger.info(f"[FILTER] Applied metadata filter: {metadata_filter}")
+
+        logger.info(f"[RETRIEVAL] Collection={collection_name} top_k={top_k} threshold={threshold}")
 
         try:
             embedding = self.embedding_manager.embed_text(q)
         except Exception as exc:
             raise RuntimeError(f"failed to create query embedding: {exc}") from exc
 
-        logger.info("[EMBEDDING] Query vector generated")
+        logger.info(f"[EMBEDDING] Query vector generated (dimension={len(embedding)})")
 
         try:
             raw = self.chroma.query_embeddings(
@@ -158,6 +165,8 @@ class RetrievalManager:
         except Exception as exc:
             raise RuntimeError(f"unexpected vector store response format: {exc}") from exc
 
+        logger.info(f"[RETRIEVAL] Retrieved {len(ids)} candidates from vector store")
+
         results: List[RetrievalResult] = []
         for idx in range(len(ids)):
             cid = ids[idx]
@@ -177,7 +186,14 @@ class RetrievalManager:
                 )
             )
 
-        logger.info("[RETRIEVAL] Retrieved %s candidates", len(results))
+            score_str = f"{score:.4f}" if score else "N/A"
+            logger.info(
+                f"[RETRIEVAL RESULT] Rank={idx+1} chunk_id={cid[:16]}... "
+                f"distance={dist:.4f} score={score_str} "
+                f"text_preview={doc[:50].replace(chr(10), ' ')}..."
+            )
+
+        logger.info("=" * 80)
 
         # Ensure deterministic ordering by distance (None values go last)
         results.sort(key=lambda r: (float("inf") if r.distance is None else r.distance))
