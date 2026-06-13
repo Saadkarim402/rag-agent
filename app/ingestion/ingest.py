@@ -492,5 +492,36 @@ class DocumentIngestionManager:
 
         return all_ids
 
+    def delete_document(self, doc_id: str, collection_name: Optional[str] = None) -> bool:
+        """Delete a document from both the repository and its vectors from ChromaDB.
+
+        Args:
+            doc_id: Unique document identifier.
+            collection_name: Optional collection name. Falls back to default configuration.
+
+        Returns:
+            True if any deletion occurred successfully, False otherwise.
+        """
+        if not doc_id:
+            raise ValueError("doc_id must be a non-empty string")
+
+        # 1. Delete from repository
+        deleted_repo = self.document_repository.delete(doc_id)
+
+        # 2. Delete from ChromaDB
+        col_name = collection_name or self.collection_name
+        deleted_vector = False
+        try:
+            collection = self.chroma.get_collection(col_name)
+            # In Chroma, deleting with where clause will clear all matching chunks
+            collection.delete(where={"source_id": doc_id})
+            deleted_vector = True
+            logger.info(f"[DELETE] Removed vectors for source_id={doc_id} from {col_name}")
+        except Exception as e:
+            logger.error(f"[DELETE] Failed to delete vectors for source_id={doc_id}: {e}")
+
+        return deleted_repo or deleted_vector
+
     ingest_document = ingest_text
     ingest_documents = ingest_texts
+
