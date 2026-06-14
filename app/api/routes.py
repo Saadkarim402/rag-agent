@@ -13,6 +13,7 @@ class QueryRequest(BaseModel):
     top_k: Optional[int] = Field(5, gt=0, description="Number of results to retrieve.")
     min_score_threshold: Optional[float] = Field(0.0, ge=0.0, le=1.0, description="Minimum relevance score.")
     metadata_filter: Optional[Dict[str, Any]] = Field(None, description="Metadata filters to apply.")
+    chat_history: Optional[List[Dict[str, str]]] = Field(None, description="Optional conversation history list.")
 
 class RAGSourceNode(BaseModel):
     model_config = {"protected_namespaces": ()}
@@ -32,6 +33,7 @@ class QueryResponse(BaseModel):
     latency_ms: float = 0.0
     faithfulness: int = 5
     answer_relevance: int = 5
+    agent_loop_logs: List[str] = []
 
 class IngestTextRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
@@ -78,6 +80,7 @@ async def query_rag_chain(
             top_k=req.top_k,
             min_score_threshold=req.min_score_threshold,
             metadata_filter=req.metadata_filter,
+            chat_history=req.chat_history,
         )
         return QueryResponse(
             answer=response.answer,
@@ -97,6 +100,7 @@ async def query_rag_chain(
             latency_ms=response.latency_ms,
             faithfulness=response.faithfulness,
             answer_relevance=response.answer_relevance,
+            agent_loop_logs=response.agent_loop_logs,
         )
     except Exception as e:
         raise HTTPException(

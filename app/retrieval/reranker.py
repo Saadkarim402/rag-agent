@@ -8,16 +8,49 @@ logger = logging.getLogger(__name__)
 
 
 class CrossEncoderReranker:
-    """Smart Re-ranking module combining semantic similarity and exact term token overlap.
+    """Smart Re-ranking module utilizing a neural Cross-Encoder model.
 
-    Does not require downloading extra model files, ensuring 100% offline compatibility.
+    Falls back to a semantic-syntactic token overlap heuristic if model loading fails.
     """
 
     def __init__(self, semantic_weight: float = 0.7) -> None:
         self.semantic_weight = semantic_weight
+        self.model = None
+        try:
+            from sentence_transformers import CrossEncoder
+            # Load the lightweight BGE reranker base model
+            logger.info("Initializing neural Cross-Encoder ('BAAI/bge-reranker-base')...")
+            self.model = CrossEncoder("BAAI/bge-reranker-base")
+            logger.info("Neural Cross-Encoder successfully initialized.")
+        except Exception as e:
+            logger.warning(
+                f"Failed to load neural Cross-Encoder model ({e}). "
+                "Reranker will use the Jaccard-overlap fallback heuristic."
+            )
 
     def _tokenize(self, text: str) -> set:
         return set(re.findall(r"\b\w+\b", text.lower()))
+
+    def _fallback_rerank(self, query: str, results: List[RetrievalResult]) -> List[RetrievalResult]:
+        """Syntactic Jaccard-overlap fallback re-scorer."""
+        query_tokens = self._tokenize(query)
+        if not query_tokens:
+            return results
+
+        reranked = []
+        for res in results:
+            semantic_score = res.score if res.score is not None else 0.0
+            doc_tokens = self._tokenize(res.document_text)
+            intersection = query_tokens.intersection(doc_tokens)
+            union = query_tokens.union(doc_tokens)
+            
+            overlap_score = len(intersection) / len(union) if union else 0.0
+            blended_score = (self.semantic_weight * semantic_score) + ((1.0 - self.semantic_weight) * overlap_score)
+            res.score = round(blended_score, 4)
+            reranked.append(res)
+
+        reranked.sort(key=lambda x: x.score if x.score is not None else 0.0, reverse=True)
+        return reranked
 
     def rerank(self, query: str, results: List[RetrievalResult]) -> List[RetrievalResult]:
         """Re-scores and sorts the retrieved chunks.
@@ -32,29 +65,30 @@ class CrossEncoderReranker:
         if not results:
             return []
 
-        query_tokens = self._tokenize(query)
-        if not query_tokens:
-            return results
+        # Use Jaccard fallback if Cross-Encoder model is not loaded
+        if self.model is None:
+            return self._fallback_rerank(query, results)
 
-        reranked = []
-        for res in results:
-            # 1. Semantic score from bi-encoder retrieval (higher is better)
-            semantic_score = res.score if res.score is not None else 0.0
-
-            # 2. Token overlap score (Jaccard similarity on keyword tokens)
-            doc_tokens = self._tokenize(res.document_text)
-            intersection = query_tokens.intersection(doc_tokens)
-            union = query_tokens.union(doc_tokens)
+        try:
+            # Prepare query-document pairs
+            pairs = [(query, res.document_text) for res in results]
             
-            overlap_score = len(intersection) / len(union) if union else 0.0
+            # Run prediction (scores are logits)
+            raw_scores = self.model.predict(pairs)
+            
+            import numpy as np
+            # Apply sigmoid to normalize logit scores to 0-1 range
+            scores = 1.0 / (1.0 + np.exp(-np.array(raw_scores)))
 
-            # 3. Blended Re-rank score
-            blended_score = (self.semantic_weight * semantic_score) + ((1.0 - self.semantic_weight) * overlap_score)
+            reranked = []
+            for idx, res in enumerate(results):
+                res.score = float(round(scores[idx], 4))
+                reranked.append(res)
 
-            res.score = round(blended_score, 4)
-            reranked.append(res)
-
-        # Sort descending by updated score
-        reranked.sort(key=lambda x: x.score if x.score is not None else 0.0, reverse=True)
-        logger.info(f"[RERANKER] Re-ranked {len(reranked)} chunks.")
-        return reranked
+            # Sort descending by re-ranked score
+            reranked.sort(key=lambda x: x.score if x.score is not None else 0.0, reverse=True)
+            logger.info(f"[RERANKER] Neural Cross-Encoder re-ranked {len(reranked)} chunks.")
+            return reranked
+        except Exception as e:
+            logger.error(f"Neural Cross-Encoder reranking failed: {e}. Falling back to Jaccard-overlap.")
+            return self._fallback_rerank(query, results)

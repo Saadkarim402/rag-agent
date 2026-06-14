@@ -57,7 +57,28 @@ def test_query_rag_engine_success():
                 "query": "Where is Paris?",
                 "collection_name": "my_collection",
                 "top_k": 3,
-                "min_score_threshold": 0.5
+                "min_score_threshold": 0.5,
+                "chat_history": None
+            },
+            timeout=30
+        )
+
+def test_query_rag_engine_with_history():
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"answer": "It is in France.", "source_nodes": []}
+    with patch("requests.post", return_value=mock_response) as mock_post:
+        history = [{"role": "user", "content": "Where is Paris?"}]
+        res = query_rag_engine("Is it beautiful?", "my_collection", 3, 0.5, chat_history=history)
+        assert res == {"answer": "It is in France.", "source_nodes": []}
+        mock_post.assert_called_once_with(
+            "http://localhost:8000/chat",
+            json={
+                "query": "Is it beautiful?",
+                "collection_name": "my_collection",
+                "top_k": 3,
+                "min_score_threshold": 0.5,
+                "chat_history": history
             },
             timeout=30
         )

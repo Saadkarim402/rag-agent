@@ -145,13 +145,14 @@ def upload_document_file(file_bytes: bytes, filename: str, doc_id: Optional[str]
     except Exception:
         return False
 
-def query_rag_engine(query: str, collection: str, top_k: int, threshold: float) -> Optional[dict]:
+def query_rag_engine(query: str, collection: str, top_k: int, threshold: float, chat_history: Optional[List[dict]] = None) -> Optional[dict]:
     try:
         payload = {
             "query": query,
             "collection_name": collection,
             "top_k": top_k,
-            "min_score_threshold": threshold
+            "min_score_threshold": threshold,
+            "chat_history": chat_history
         }
         response = requests.post(f"{API_BASE_URL}/chat", json=payload, timeout=30)
         if response.status_code == 200:
@@ -433,6 +434,21 @@ def main():
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
             if msg["role"] == "assistant" and "source_nodes" in msg:
+                # 0. Agent execution trace
+                if "agent_loop_logs" in msg and msg["agent_loop_logs"]:
+                    with st.expander("🕵️ Agent Execution Trace & Loop Log", expanded=True):
+                        for log_entry in msg["agent_loop_logs"]:
+                            if "Critique Check Failed" in log_entry or "insufficient" in log_entry:
+                                st.markdown(f"⚠️ {log_entry}")
+                            elif "sufficient" in log_entry or "Success" in log_entry:
+                                st.markdown(f"✅ {log_entry}")
+                            elif "Attempt" in log_entry:
+                                st.markdown(f"🔄 **{log_entry}**")
+                            elif "Escalating" in log_entry:
+                                st.markdown(f"🌐 **{log_entry}**")
+                            else:
+                                st.markdown(f"ℹ️ {log_entry}")
+
                 # 1. Expandable details underneath response
                 with st.expander("🔍 View Retrieved Context & Similarity Scores"):
                     for i, source in enumerate(msg["source_nodes"], 1):
@@ -474,7 +490,9 @@ def main():
         # Generate agent answer
         with st.chat_message("assistant"):
             with st.spinner("Retrieving knowledge and generating answer..."):
-                response = query_rag_engine(prompt, collection, top_k, threshold)
+                # Pass chat history (excluding current user message which is last in session state)
+                history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[:-1]]
+                response = query_rag_engine(prompt, collection, top_k, threshold, chat_history=history)
                 
                 if response:
                     answer = response.get("answer", "I cannot answer this based on the provided context.")
@@ -491,6 +509,7 @@ def main():
                         "latency_ms": response.get("latency_ms", 0.0),
                         "faithfulness": response.get("faithfulness", 5),
                         "answer_relevance": response.get("answer_relevance", 5),
+                        "agent_loop_logs": response.get("agent_loop_logs", []),
                     }
                     st.session_state.messages.append(msg_data)
                     st.rerun()
