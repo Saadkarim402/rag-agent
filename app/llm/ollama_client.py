@@ -30,12 +30,11 @@ class OllamaClient(BaseLLMClient):
             data = response.json()
             return data.get("response", "")
         except Exception as e:
-            is_network_err = isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
-            if self.fallback_to_simulation and is_network_err:
+            if self.fallback_to_simulation:
                 import logging
                 import re
                 logger = logging.getLogger(__name__)
-                logger.warning(f"Ollama connection failed ({e}). Generating a simulated response based on context.")
+                logger.warning(f"Ollama generation failed ({e}). Generating a simulated response based on context.")
 
                 # Parse context and query from the prompt
                 context_str = ""
@@ -63,7 +62,7 @@ class OllamaClient(BaseLLMClient):
 
                 summary = " ".join(answers)
                 return (
-                    f"🤖 **[Simulated Response - Ollama Offline]**\n\n"
+                    f"🤖 **[Simulated Response - Ollama Offline/Model Missing]**\n\n"
                     f"Based on the retrieved context, here is the answer:\n"
                     f"{summary}"
                 )

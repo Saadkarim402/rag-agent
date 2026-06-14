@@ -38,7 +38,7 @@ def test_ollama_client_success():
         )
 
 def test_ollama_client_failure():
-    client = OllamaClient()
+    client = OllamaClient(fallback_to_simulation=False)
     with patch("requests.post", side_effect=requests.RequestException("Connection error")):
         with pytest.raises(RuntimeError):
             client.generate("hello")
