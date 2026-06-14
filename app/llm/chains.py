@@ -36,7 +36,7 @@ class RAGChain:
         system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
         prompt_template: str = DEFAULT_PROMPT_TEMPLATE,
         reranker: Optional[Any] = None,
-        confidence_threshold: float = 0.35,
+        confidence_threshold: float = 0.0,
         enable_evaluation: bool = False,
     ) -> None:
         """Initialize the RAG Chain.
@@ -136,7 +136,7 @@ class RAGChain:
         max_score = max([r.score for r in results if r.score is not None], default=0.0)
         threshold = min_score_threshold if min_score_threshold is not None else self.confidence_threshold
         
-        if max_score < threshold or not results:
+        if threshold > 0.0 and (max_score < threshold or not results):
             # Trigger Web Search Fallback
             web_search_triggered = True
             logger.warning(f"[AGENT] Low confidence match ({max_score:.4f} < {threshold:.4f}). Triggering Web Search Fallback...")

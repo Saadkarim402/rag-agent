@@ -68,6 +68,7 @@ def test_ddg_search_tool():
     """
 
     mock_response = MagicMock()
+    mock_response.status_code = 200
     mock_response.text = mock_html
     mock_response.raise_for_status = MagicMock()
 
