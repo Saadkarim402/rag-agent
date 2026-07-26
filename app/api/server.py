@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 from app.api.routes import router
@@ -103,3 +104,6 @@ app.add_middleware(
 
 # Include the API routes router
 app.include_router(router)
+
+# Mount the static frontend interface at the root path
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
