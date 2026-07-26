@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Pre-download BAAI embeddings and reranker models so the container starts instantly
 RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
 SentenceTransformer('BAAI/bge-small-en-v1.5'); \
-CrossEncoder('BAAI/bge-reranker-base')"
+CrossEncoder('cross-encoder/ms-marco-TinyBERT-L-2-v2')"
 
 # Copy project files
 COPY . .

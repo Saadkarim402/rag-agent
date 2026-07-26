@@ -18,9 +18,9 @@ class CrossEncoderReranker:
         self.model = None
         try:
             from sentence_transformers import CrossEncoder
-            # Load the lightweight BGE reranker base model
-            logger.info("Initializing neural Cross-Encoder ('BAAI/bge-reranker-base')...")
-            self.model = CrossEncoder("BAAI/bge-reranker-base")
+            # Load the lightweight TinyBERT reranker model to prevent OOM on 512MB RAM instances
+            logger.info("Initializing neural Cross-Encoder ('cross-encoder/ms-marco-TinyBERT-L-2-v2')...")
+            self.model = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L-2-v2")
             logger.info("Neural Cross-Encoder successfully initialized.")
         except Exception as e:
             logger.warning(
