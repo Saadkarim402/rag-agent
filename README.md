@@ -1,3 +1,13 @@
+---
+title: RAG Agent
+emoji: 🌌
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # RAG Agent
 
 Small Python workspace for building a retrieval-augmented generation agent.
